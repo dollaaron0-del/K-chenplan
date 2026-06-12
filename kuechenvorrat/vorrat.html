@@ -405,7 +405,16 @@ function reweParsen(text) {
 }
 
 function reweAnalysieren() {
-  reweArtikel = reweParsen(document.getElementById("rewe-text").value);
+  const text = document.getElementById("rewe-text").value;
+  reweArtikel = reweParsen(text);
+
+  // Bestelldatum automatisch aus dem Text übernehmen (z. B. "12.06.2026")
+  const d = text.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  if (d) {
+    document.getElementById("rewe-datum").value =
+      `${d[3]}-${d[2].padStart(2, "0")}-${d[1].padStart(2, "0")}`;
+  }
+
   const box = document.getElementById("rewe-ergebnis");
   if (!reweArtikel.length) {
     alert("Es wurden keine Artikel erkannt. Bitte die Artikelliste der Bestellung einfügen (eine Zeile pro Artikel).");
@@ -416,20 +425,32 @@ function reweAnalysieren() {
   const zeilen = document.getElementById("rewe-zeilen");
   zeilen.innerHTML = "";
   reweArtikel.forEach((a, i) => {
-    const tr = document.createElement("tr");
+    // Vorschlag: gemerkte Zuordnung, sonst Produkt, dessen Namenswörter im Artikel vorkommen
+    let vorschlag = zuord[a.name.toLowerCase()];
+    if (!vorschlag) {
+      const artikelKlein = a.name.toLowerCase();
+      const treffer = daten.produkte.find(p =>
+        p.name.toLowerCase().split(/\s+/).every(w => artikelKlein.includes(w)));
+      if (treffer) vorschlag = treffer.name;
+    }
     const optionen = [`<option value="">– nicht verbuchen –</option>`,
                       `<option value="${NEU}">Neues Produkt anlegen …</option>`]
-      .concat(daten.produkte.map(p => {
-        const sel = zuord[a.name.toLowerCase()] === p.name ? "selected" : "";
-        return `<option ${sel}>${p.name.replace(/</g, "&lt;")}</option>`;
-      }));
+      .concat(daten.produkte.map(p =>
+        `<option ${p.name === vorschlag ? "selected" : ""}>${p.name.replace(/</g, "&lt;")}</option>`));
+    const tr = document.createElement("tr");
     tr.innerHTML =
       `<td><input type="checkbox" id="rewe-ok${i}" checked></td><td></td>` +
       `<td class="zahl"><input type="number" id="rewe-menge${i}" min="0" step="any" style="width:70px"></td>` +
-      `<td><select id="rewe-ziel${i}" style="padding:6px;max-width:240px">${optionen.join("")}</select></td>`;
+      `<td><select id="rewe-ziel${i}" style="padding:6px;max-width:240px">${optionen.join("")}</select>` +
+      `<span id="rewe-neu${i}" hidden> <input id="rewe-neuname${i}" placeholder="Allgemeiner Name, z. B. Frischkäse Kräuter" style="width:220px;margin-top:4px">` +
+      ` <input id="rewe-einheit${i}" placeholder="Einheit" value="Stück" style="width:70px"></span></td>`;
     tr.children[1].textContent = a.name;
     zeilen.append(tr);
     document.getElementById("rewe-menge" + i).value = a.menge;
+    const select = document.getElementById("rewe-ziel" + i);
+    select.onchange = () => {
+      document.getElementById("rewe-neu" + i).hidden = select.value !== NEU;
+    };
   });
   document.getElementById("rewe-ergebnis").hidden = false;
 }
@@ -447,10 +468,11 @@ function reweVerbuchen() {
 
     let p;
     if (ziel === NEU) {
-      const name = reweArtikel[i].name;
+      const name = document.getElementById("rewe-neuname" + i).value.trim() || reweArtikel[i].name;
+      const einheit = document.getElementById("rewe-einheit" + i).value.trim() || "Stück";
       p = daten.produkte.find(x => x.name.toLowerCase() === name.toLowerCase());
       if (!p) {
-        p = { name, einheit: "Stück", soll: 0, einkaeufe: [], verbrauch: [] };
+        p = { name, einheit, soll: 0, einkaeufe: [], verbrauch: [] };
         daten.produkte.push(p);
       }
     } else {
