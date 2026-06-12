@@ -127,6 +127,9 @@
       <button class="knopf gefahr rechts" onclick="loeschen()">Produkt löschen</button>
     </div>
     <div class="leiste">
+      <button class="knopf sekundaer" id="datei-knopf" onclick="speicherdateiWaehlen()">Speicherdatei wählen …</button>
+      <span id="datei-status" style="align-self:center;font-size:.9em;color:#777"></span>
+      <span class="rechts"></span>
       <button class="knopf sekundaer" onclick="exportieren()">Daten sichern (Export)</button>
       <button class="knopf sekundaer" onclick="document.getElementById('importdatei').click()">Daten laden (Import)</button>
       <input type="file" id="importdatei" accept=".json" hidden onchange="importieren(this.files[0])">
@@ -178,8 +181,9 @@
 </main>
 
 <footer>
-  Die Daten werden im Browser gespeichert (localStorage). Nutze „Daten sichern", um eine
-  Sicherungsdatei anzulegen – sie ist kompatibel mit der <code>vorratsdaten.json</code> der Python-Version.
+  Über „Speicherdatei wählen" wird jede Änderung automatisch in eine <code>vorratsdaten.json</code>
+  geschrieben (kompatibel mit der Python-Version). Zusätzlich werden die Daten im Browser gespeichert.
+  Geht der Browser-Speicher verloren, lädst du die Speicherdatei einfach über „Daten laden (Import)" wieder ein.
 </footer>
 
 <dialog id="dialog">
@@ -210,7 +214,95 @@ function laden() {
 
 function speichern() {
   localStorage.setItem(SPEICHER_SCHLUESSEL, JSON.stringify(daten));
+  inDateiSchreiben(); // automatisch auch in die Speicherdatei
 }
+
+// ----- Automatisches Speichern in eine Datei (File System Access API)
+
+let dateiHandle = null;
+
+function dateiStatus(text) {
+  document.getElementById("datei-status").textContent = text;
+}
+
+// Datei-Handle in IndexedDB merken, damit es einen Neustart des Browsers überlebt
+function handleDB() {
+  return new Promise((ok, fehler) => {
+    const req = indexedDB.open("kuechenvorrat-datei", 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("handles");
+    req.onsuccess = () => ok(req.result);
+    req.onerror = () => fehler(req.error);
+  });
+}
+
+async function handleMerken(handle) {
+  const db = await handleDB();
+  db.transaction("handles", "readwrite").objectStore("handles").put(handle, "datei");
+}
+
+async function handleLaden() {
+  const db = await handleDB();
+  return new Promise(ok => {
+    const req = db.transaction("handles").objectStore("handles").get("datei");
+    req.onsuccess = () => ok(req.result || null);
+    req.onerror = () => ok(null);
+  });
+}
+
+async function speicherdateiWaehlen() {
+  if (!window.showSaveFilePicker) {
+    alert("Dieser Browser unterstützt das automatische Speichern in eine Datei nicht.\n" +
+          "Bitte Edge oder Chrome verwenden – oder regelmäßig „Daten sichern (Export)" nutzen.");
+    return;
+  }
+  try {
+    if (dateiHandle) {
+      // bereits verbunden → nur Berechtigung erneuern
+      await dateiHandle.requestPermission({ mode: "readwrite" });
+    } else {
+      dateiHandle = await window.showSaveFilePicker({
+        suggestedName: "vorratsdaten.json",
+        types: [{ description: "JSON", accept: { "application/json": [".json"] } }],
+      });
+      await handleMerken(dateiHandle);
+    }
+    await inDateiSchreiben();
+    dateiStatus(`✓ wird automatisch gespeichert: ${dateiHandle.name}`);
+    document.getElementById("datei-knopf").textContent = "Speicherdatei: " + dateiHandle.name;
+  } catch (e) { /* Auswahl abgebrochen */ }
+}
+
+async function inDateiSchreiben() {
+  if (!dateiHandle) return;
+  try {
+    if (await dateiHandle.queryPermission({ mode: "readwrite" }) !== "granted") {
+      dateiStatus("⚠ Klick auf den Knopf links, um das Speichern wieder zu erlauben");
+      return;
+    }
+    const w = await dateiHandle.createWritable();
+    await w.write(JSON.stringify(daten, null, 2));
+    await w.close();
+    dateiStatus(`✓ gespeichert: ${dateiHandle.name} (${new Date().toLocaleTimeString("de-DE")})`);
+  } catch (e) {
+    dateiStatus("⚠ Speichern in die Datei fehlgeschlagen – Export nutzen!");
+  }
+}
+
+// Beim Start: gemerkte Speicherdatei wieder verbinden
+(async () => {
+  if (!window.showSaveFilePicker) return;
+  dateiHandle = await handleLaden().catch(() => null);
+  if (!dateiHandle) {
+    dateiStatus("Tipp: Speicherdatei wählen, dann wird jede Änderung automatisch gespeichert.");
+    return;
+  }
+  document.getElementById("datei-knopf").textContent = "Speicherdatei: " + dateiHandle.name;
+  if (await dateiHandle.queryPermission({ mode: "readwrite" }) === "granted") {
+    dateiStatus(`✓ wird automatisch gespeichert: ${dateiHandle.name}`);
+  } else {
+    dateiStatus("⚠ Klick auf den Knopf links, um das automatische Speichern wieder zu erlauben");
+  }
+})();
 
 function heute() {
   return new Date().toISOString().slice(0, 10); // JJJJ-MM-TT
