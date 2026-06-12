@@ -111,7 +111,7 @@
       <thead>
         <tr>
           <th>Produkt</th><th>Einheit</th>
-          <th class="zahl">Bestand</th><th class="zahl">Soll-Vorrat</th>
+          <th class="zahl">Bestand (geschätzt)</th><th class="zahl">Soll-Vorrat</th>
           <th class="zahl">Reicht noch ca.</th>
         </tr>
       </thead>
@@ -230,9 +230,25 @@ function verbrauchProTag(p) {
 }
 
 function bestand(p) {
-  const gekauft = (p.einkaeufe || []).reduce((s, e) => s + e.menge, 0);
-  const verbraucht = (p.verbrauch || []).reduce((s, v) => s + v.menge, 0);
-  return Math.max(0, gekauft - verbraucht);
+  // Annahme: Was vor der letzten Bestellung gekauft wurde, ist inzwischen verbraucht.
+  // Bestand = letzte Bestellung minus Verbrauch seitdem (erfasst oder geschätzt).
+  const eink = [...(p.einkaeufe || [])].sort((a, b) => a.datum.localeCompare(b.datum));
+  if (!eink.length) return 0;
+  const letztesDatum = eink[eink.length - 1].datum;
+  const basis = eink.filter(e => e.datum === letztesDatum).reduce((s, e) => s + e.menge, 0);
+
+  const manuell = (p.verbrauch || [])
+    .filter(v => v.datum >= letztesDatum)
+    .reduce((s, v) => s + v.menge, 0);
+  let verbraucht = manuell;
+  if (manuell === 0) {
+    const rate = verbrauchProTag(p);
+    if (rate) {
+      const tage = (new Date(heute()) - new Date(letztesDatum)) / 86400000;
+      verbraucht = rate * Math.max(0, tage);
+    }
+  }
+  return Math.max(0, basis - verbraucht);
 }
 
 function reichtNochTage(p) {
