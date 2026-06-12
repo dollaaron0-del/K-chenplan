@@ -103,6 +103,7 @@
   <div class="tabs">
     <button id="tabknopf-vorrat" class="aktiv" onclick="zeigeTab('vorrat')">Vorrat</button>
     <button id="tabknopf-liste" onclick="zeigeTab('liste')">Einkaufsliste</button>
+    <button id="tabknopf-rewe" onclick="zeigeTab('rewe')">REWE-Import</button>
   </div>
 
   <section id="tab-vorrat" class="tab aktiv">
@@ -122,6 +123,7 @@
       <button class="knopf" onclick="produktAnlegen()">Produkt anlegen</button>
       <button class="knopf" onclick="einkauf()">Einkauf eintragen</button>
       <button class="knopf" onclick="verbrauchEintragen()">Verbrauch eintragen</button>
+      <button class="knopf sekundaer" onclick="sollAendern()">Soll-Vorrat ändern</button>
       <button class="knopf gefahr rechts" onclick="loeschen()">Produkt löschen</button>
     </div>
     <div class="leiste">
@@ -139,6 +141,39 @@
       <tbody id="liste-zeilen"></tbody>
     </table>
     <div id="liste-leer" class="leer" hidden>Alles aufgefüllt – es muss nichts gekauft werden. 🎉</div>
+  </section>
+
+  <section id="tab-rewe" class="tab">
+    <p style="margin-top:0">
+      Alte Bestellungen nachpflegen: Öffne auf rewe.de unter <b>Mein Konto → Meine Bestellungen</b>
+      eine Bestellung, markiere die Artikelliste mit der Maus, kopiere sie (Strg+C) und füge sie
+      hier ein (Strg+V). Dann <b>Analysieren</b> klicken, die erkannten Artikel prüfen und verbuchen.
+    </p>
+    <label>Datum der Bestellung:
+      <input type="date" id="rewe-datum" style="padding:6px;border:1px solid var(--rand);border-radius:6px">
+    </label>
+    <textarea id="rewe-text" rows="8" placeholder="Hier den kopierten Text der REWE-Bestellung einfügen …"
+      style="width:100%;margin-top:8px;padding:8px;border:1px solid var(--rand);border-radius:6px;font:inherit"></textarea>
+    <div class="leiste">
+      <button class="knopf" onclick="reweAnalysieren()">Analysieren</button>
+    </div>
+
+    <div id="rewe-ergebnis" hidden>
+      <h3 style="margin-bottom:6px">Erkannte Artikel</h3>
+      <p style="margin-top:0;font-size:.9em;color:#555">
+        Menge und Zuordnung kannst du noch anpassen. Die Zuordnung REWE-Artikel → Produkt wird
+        gemerkt und beim nächsten Import automatisch vorgeschlagen.
+      </p>
+      <table>
+        <thead>
+          <tr><th></th><th>REWE-Artikel</th><th class="zahl">Menge</th><th>Als Produkt verbuchen</th></tr>
+        </thead>
+        <tbody id="rewe-zeilen"></tbody>
+      </table>
+      <div class="leiste">
+        <button class="knopf" onclick="reweVerbuchen()">Einkäufe verbuchen</button>
+      </div>
+    </div>
   </section>
 </main>
 
@@ -289,6 +324,20 @@ function mengeErfassen(titel, feldtext, liste) {
 function einkauf()            { mengeErfassen("Einkauf", "Gekaufte Menge", "einkaeufe"); }
 function verbrauchEintragen() { mengeErfassen("Verbrauch", "Verbrauchte Menge", "verbrauch"); }
 
+function sollAendern() {
+  const p = gewaehltesProdukt();
+  if (!p) return;
+  frage(`Soll-Vorrat: ${p.name}`, [
+    { text: `Wie viel soll immer da sein? (${p.einheit}):`, zahl: true, vorgabe: p.soll },
+  ], ([wert]) => {
+    const soll = parseFloat(String(wert).replace(",", "."));
+    if (isNaN(soll) || soll < 0) { alert("Bitte einen gültigen Soll-Vorrat eingeben."); return; }
+    p.soll = soll;
+    speichern();
+    aktualisieren();
+  });
+}
+
 function loeschen() {
   const p = gewaehltesProdukt();
   if (!p) return;
@@ -325,6 +374,103 @@ function importieren(datei) {
   document.getElementById("importdatei").value = "";
 }
 
+// ---------------------------------------------------------------- REWE-Import
+
+const NEU = "__neu__";
+let reweArtikel = []; // [{name, menge}]
+
+function reweParsen(text) {
+  const artikel = [];
+  for (let zeile of text.split("\n")) {
+    zeile = zeile.trim();
+    if (!zeile) continue;
+    // Preise und reine Zahlen-/Statuszeilen überspringen
+    if (/^\d+[.,]\d{2}\s*€?$/.test(zeile) || /^€/.test(zeile)) continue;
+    if (/^(gesamt|summe|zwischensumme|liefer|servicegeb|rabatt|mwst|pfand|bestell|artikel\b)/i.test(zeile)) continue;
+
+    let menge = 1, name = zeile;
+    let m = zeile.match(/^(\d+(?:[.,]\d+)?)\s*[x×]\s+(.+)$/i)      // "2 x Vollmilch"
+         || zeile.match(/^(.+?)\s+[x×]?\s*(\d+(?:[.,]\d+)?)\s*(?:x|Stk\.?|Stück)$/i); // "Vollmilch 2 Stk"
+    if (m) {
+      const a = parseFloat(m[1].replace(",", "."));
+      if (!isNaN(a) && /^\d/.test(m[1])) { menge = a; name = m[2]; }
+      else { name = m[1]; menge = parseFloat(m[2].replace(",", ".")); }
+    }
+    name = name.replace(/\s*\d+[.,]\d{2}\s*€.*$/, "").trim(); // Preis am Zeilenende abschneiden
+    if (name.length < 2) continue;
+    const vorhanden = artikel.find(a => a.name === name);
+    if (vorhanden) vorhanden.menge += menge; else artikel.push({ name, menge });
+  }
+  return artikel;
+}
+
+function reweAnalysieren() {
+  reweArtikel = reweParsen(document.getElementById("rewe-text").value);
+  const box = document.getElementById("rewe-ergebnis");
+  if (!reweArtikel.length) {
+    alert("Es wurden keine Artikel erkannt. Bitte die Artikelliste der Bestellung einfügen (eine Zeile pro Artikel).");
+    box.hidden = true;
+    return;
+  }
+  const zuord = daten.zuordnungen || {};
+  const zeilen = document.getElementById("rewe-zeilen");
+  zeilen.innerHTML = "";
+  reweArtikel.forEach((a, i) => {
+    const tr = document.createElement("tr");
+    const optionen = [`<option value="">– nicht verbuchen –</option>`,
+                      `<option value="${NEU}">Neues Produkt anlegen …</option>`]
+      .concat(daten.produkte.map(p => {
+        const sel = zuord[a.name.toLowerCase()] === p.name ? "selected" : "";
+        return `<option ${sel}>${p.name.replace(/</g, "&lt;")}</option>`;
+      }));
+    tr.innerHTML =
+      `<td><input type="checkbox" id="rewe-ok${i}" checked></td><td></td>` +
+      `<td class="zahl"><input type="number" id="rewe-menge${i}" min="0" step="any" style="width:70px"></td>` +
+      `<td><select id="rewe-ziel${i}" style="padding:6px;max-width:240px">${optionen.join("")}</select></td>`;
+    tr.children[1].textContent = a.name;
+    zeilen.append(tr);
+    document.getElementById("rewe-menge" + i).value = a.menge;
+  });
+  document.getElementById("rewe-ergebnis").hidden = false;
+}
+
+function reweVerbuchen() {
+  const datum = document.getElementById("rewe-datum").value || heute();
+  daten.zuordnungen = daten.zuordnungen || {};
+  let gebucht = 0, uebersprungen = 0;
+
+  for (let i = 0; i < reweArtikel.length; i++) {
+    if (!document.getElementById("rewe-ok" + i).checked) continue;
+    const ziel = document.getElementById("rewe-ziel" + i).value;
+    const menge = parseFloat(document.getElementById("rewe-menge" + i).value);
+    if (!ziel || isNaN(menge) || menge <= 0) { uebersprungen++; continue; }
+
+    let p;
+    if (ziel === NEU) {
+      const name = reweArtikel[i].name;
+      p = daten.produkte.find(x => x.name.toLowerCase() === name.toLowerCase());
+      if (!p) {
+        p = { name, einheit: "Stück", soll: 0, einkaeufe: [], verbrauch: [] };
+        daten.produkte.push(p);
+      }
+    } else {
+      p = daten.produkte.find(x => x.name === ziel);
+      if (!p) { uebersprungen++; continue; }
+    }
+    p.einkaeufe.push({ datum, menge });
+    daten.zuordnungen[reweArtikel[i].name.toLowerCase()] = p.name;
+    gebucht++;
+  }
+
+  speichern();
+  aktualisieren();
+  document.getElementById("rewe-ergebnis").hidden = true;
+  document.getElementById("rewe-text").value = "";
+  alert(`${gebucht} Einkäufe verbucht` + (uebersprungen ? `, ${uebersprungen} übersprungen (keine Zuordnung)` : "") +
+        `.\nNeu angelegte Produkte haben Soll-Vorrat 0 – den kannst du im Tab „Vorrat" noch setzen.\n` +
+        `Du kannst jetzt die nächste Bestellung einfügen (Datum nicht vergessen).`);
+}
+
 // ---------------------------------------------------------------- Anzeige
 
 function zahl(n) {
@@ -332,7 +478,7 @@ function zahl(n) {
 }
 
 function zeigeTab(name) {
-  for (const t of ["vorrat", "liste"]) {
+  for (const t of ["vorrat", "liste", "rewe"]) {
     document.getElementById("tab-" + t).classList.toggle("aktiv", t === name);
     document.getElementById("tabknopf-" + t).classList.toggle("aktiv", t === name);
   }
