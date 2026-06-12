@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Küchenvorrat</title>
+<style>
+  :root {
+    --akzent: #2f6f4f;
+    --akzent-hell: #e8f3ed;
+    --rand: #d5dbd8;
+    --text: #243029;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    color: var(--text);
+    background: #f5f7f6;
+  }
+  header {
+    background: var(--akzent);
+    color: #fff;
+    padding: 14px 20px;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 1.3em; }
+  header span { opacity: .8; font-size: .85em; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .tabs button {
+    padding: 9px 18px;
+    border: 1px solid var(--rand);
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    background: #e9eceb;
+    cursor: pointer;
+    font-size: 1em;
+  }
+  .tabs button.aktiv { background: #fff; font-weight: 600; color: var(--akzent); }
+  .tab { display: none; background: #fff; border: 1px solid var(--rand); border-radius: 0 8px 8px 8px; padding: 14px; }
+  .tab.aktiv { display: block; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--rand); text-align: left; }
+  th { background: var(--akzent-hell); }
+  td.zahl, th.zahl { text-align: center; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #f3f7f5; }
+  tbody tr.gewaehlt { background: var(--akzent-hell); }
+  .leer { color: #888; font-style: italic; padding: 14px 4px; }
+
+  .leiste { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .leiste .rechts { margin-left: auto; }
+  button.knopf {
+    padding: 8px 14px;
+    border: 1px solid var(--akzent);
+    border-radius: 6px;
+    background: var(--akzent);
+    color: #fff;
+    cursor: pointer;
+    font-size: .95em;
+  }
+  button.knopf.sekundaer { background: #fff; color: var(--akzent); }
+  button.knopf.gefahr { background: #fff; color: #a33; border-color: #a33; }
+  button.knopf:hover { filter: brightness(1.08); }
+
+  dialog {
+    border: 1px solid var(--rand);
+    border-radius: 10px;
+    padding: 18px;
+    min-width: 320px;
+    box-shadow: 0 8px 30px rgba(0,0,0,.15);
+  }
+  dialog::backdrop { background: rgba(0,0,0,.25); }
+  dialog h2 { margin: 0 0 12px; font-size: 1.1em; }
+  dialog label { display: block; margin: 10px 0 4px; font-size: .9em; }
+  dialog input {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid var(--rand);
+    border-radius: 6px;
+    font-size: 1em;
+  }
+  dialog menu { display: flex; gap: 8px; justify-content: flex-end; margin: 16px 0 0; padding: 0; }
+
+  .hinweis-leer { color: #a33; font-weight: 600; }
+  footer { max-width: 860px; margin: 8px auto 24px; padding: 0 16px; font-size: .8em; color: #777; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Küchenvorrat</h1>
+  <span>läuft komplett lokal in deinem Browser – keine Daten verlassen den Rechner</span>
+</header>
+
+<main>
+  <div class="tabs">
+    <button id="tabknopf-vorrat" class="aktiv" onclick="zeigeTab('vorrat')">Vorrat</button>
+    <button id="tabknopf-liste" onclick="zeigeTab('liste')">Einkaufsliste</button>
+  </div>
+
+  <section id="tab-vorrat" class="tab aktiv">
+    <table>
+      <thead>
+        <tr>
+          <th>Produkt</th><th>Einheit</th>
+          <th class="zahl">Bestand</th><th class="zahl">Soll-Vorrat</th>
+          <th class="zahl">Reicht noch ca.</th>
+        </tr>
+      </thead>
+      <tbody id="vorrat-zeilen"></tbody>
+    </table>
+    <div id="vorrat-leer" class="leer" hidden>Noch keine Produkte – lege mit „Produkt anlegen" los.</div>
+
+    <div class="leiste">
+      <button class="knopf" onclick="produktAnlegen()">Produkt anlegen</button>
+      <button class="knopf" onclick="einkauf()">Einkauf eintragen</button>
+      <button class="knopf" onclick="verbrauchEintragen()">Verbrauch eintragen</button>
+      <button class="knopf gefahr rechts" onclick="loeschen()">Produkt löschen</button>
+    </div>
+    <div class="leiste">
+      <button class="knopf sekundaer" onclick="exportieren()">Daten sichern (Export)</button>
+      <button class="knopf sekundaer" onclick="document.getElementById('importdatei').click()">Daten laden (Import)</button>
+      <input type="file" id="importdatei" accept=".json" hidden onchange="importieren(this.files[0])">
+    </div>
+  </section>
+
+  <section id="tab-liste" class="tab">
+    <table>
+      <thead>
+        <tr><th>Produkt</th><th class="zahl">Kaufen</th><th>Einheit</th><th>Hinweis</th></tr>
+      </thead>
+      <tbody id="liste-zeilen"></tbody>
+    </table>
+    <div id="liste-leer" class="leer" hidden>Alles aufgefüllt – es muss nichts gekauft werden. 🎉</div>
+  </section>
+</main>
+
+<footer>
+  Die Daten werden im Browser gespeichert (localStorage). Nutze „Daten sichern", um eine
+  Sicherungsdatei anzulegen – sie ist kompatibel mit der <code>vorratsdaten.json</code> der Python-Version.
+</footer>
+
+<dialog id="dialog">
+  <h2 id="dialog-titel"></h2>
+  <div id="dialog-felder"></div>
+  <menu>
+    <button class="knopf sekundaer" onclick="dialogAbbrechen()">Abbrechen</button>
+    <button class="knopf" onclick="dialogOk()">OK</button>
+  </menu>
+</dialog>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------- Datenhaltung
+
+const SPEICHER_SCHLUESSEL = "kuechenvorrat";
+let daten = laden();
+let gewaehlt = null; // Name des ausgewählten Produkts
+
+function laden() {
+  try {
+    const roh = localStorage.getItem(SPEICHER_SCHLUESSEL);
+    if (roh) return JSON.parse(roh);
+  } catch (e) { /* defekte Daten ignorieren */ }
+  return { produkte: [] };
+}
+
+function speichern() {
+  localStorage.setItem(SPEICHER_SCHLUESSEL, JSON.stringify(daten));
+}
+
+function heute() {
+  return new Date().toISOString().slice(0, 10); // JJJJ-MM-TT
+}
+
+// ---------------------------------------------------------------- Auswertung
+// Gleiche Logik wie in vorrat.py
+
+function verbrauchProTag(p) {
+  const eink = [...(p.einkaeufe || [])].sort((a, b) => a.datum.localeCompare(b.datum));
+  if (eink.length < 2) return null;
+  const tage = (new Date(eink[eink.length - 1].datum) - new Date(eink[0].datum)) / 86400000;
+  if (tage <= 0) return null;
+  // Menge ohne den letzten Einkauf – die gilt als im Zeitraum verbraucht
+  const menge = eink.slice(0, -1).reduce((s, e) => s + e.menge, 0);
+  return menge / tage;
+}
+
+function bestand(p) {
+  const gekauft = (p.einkaeufe || []).reduce((s, e) => s + e.menge, 0);
+  const verbraucht = (p.verbrauch || []).reduce((s, v) => s + v.menge, 0);
+  return Math.max(0, gekauft - verbraucht);
+}
+
+function reichtNochTage(p) {
+  const rate = verbrauchProTag(p);
+  return rate ? bestand(p) / rate : null;
+}
+
+function einkaufsliste() {
+  return daten.produkte
+    .map(p => [p, p.soll - bestand(p)])
+    .filter(([, fehlt]) => fehlt > 0);
+}
+
+// ---------------------------------------------------------------- Dialog
+
+const dialog = document.getElementById("dialog");
+let dialogCallback = null;
+
+function frage(titel, felder, callback) {
+  document.getElementById("dialog-titel").textContent = titel;
+  const box = document.getElementById("dialog-felder");
+  box.innerHTML = "";
+  felder.forEach((f, i) => {
+    const label = document.createElement("label");
+    label.textContent = f.text;
+    const input = document.createElement("input");
+    input.id = "feld" + i;
+    input.type = f.zahl ? "number" : "text";
+    if (f.zahl) { input.min = "0"; input.step = "any"; }
+    input.value = f.vorgabe ?? "";
+    input.addEventListener("keydown", e => { if (e.key === "Enter") dialogOk(); });
+    box.append(label, input);
+  });
+  dialogCallback = callback;
+  dialog.showModal();
+  box.querySelector("input")?.focus();
+}
+
+function dialogOk() {
+  const werte = [...document.querySelectorAll("#dialog-felder input")].map(i => i.value.trim());
+  dialog.close();
+  dialogCallback?.(werte);
+}
+
+function dialogAbbrechen() {
+  dialog.close();
+  dialogCallback = null;
+}
+
+// ---------------------------------------------------------------- Aktionen
+
+function gewaehltesProdukt() {
+  const p = daten.produkte.find(p => p.name === gewaehlt);
+  if (!p) alert("Bitte erst ein Produkt in der Tabelle auswählen (Zeile anklicken).");
+  return p;
+}
+
+function produktAnlegen() {
+  frage("Produkt anlegen", [
+    { text: "Name des Produkts:" },
+    { text: "Einheit (z. B. Stück, Liter, kg):", vorgabe: "Stück" },
+    { text: "Soll-Vorrat (wie viel soll immer da sein?):", zahl: true },
+  ], ([name, einheit, soll]) => {
+    if (!name) return;
+    if (daten.produkte.some(p => p.name.toLowerCase() === name.toLowerCase())) {
+      alert("Dieses Produkt gibt es schon.");
+      return;
+    }
+    const sollZahl = parseFloat(soll.replace(",", "."));
+    if (isNaN(sollZahl) || sollZahl < 0) { alert("Bitte einen gültigen Soll-Vorrat eingeben."); return; }
+    daten.produkte.push({ name, einheit: einheit || "Stück", soll: sollZahl, einkaeufe: [], verbrauch: [] });
+    speichern();
+    aktualisieren();
+  });
+}
+
+function mengeErfassen(titel, feldtext, liste) {
+  const p = gewaehltesProdukt();
+  if (!p) return;
+  frage(`${titel}: ${p.name}`, [{ text: `${feldtext} (${p.einheit}):`, zahl: true }], ([wert]) => {
+    const menge = parseFloat(wert.replace(",", "."));
+    if (isNaN(menge) || menge <= 0) { alert("Bitte eine Menge größer 0 eingeben."); return; }
+    p[liste].push({ datum: heute(), menge });
+    speichern();
+    aktualisieren();
+  });
+}
+
+function einkauf()            { mengeErfassen("Einkauf", "Gekaufte Menge", "einkaeufe"); }
+function verbrauchEintragen() { mengeErfassen("Verbrauch", "Verbrauchte Menge", "verbrauch"); }
+
+function loeschen() {
+  const p = gewaehltesProdukt();
+  if (!p) return;
+  if (confirm(`„${p.name}" wirklich löschen?`)) {
+    daten.produkte = daten.produkte.filter(x => x !== p);
+    gewaehlt = null;
+    speichern();
+    aktualisieren();
+  }
+}
+
+// ---------------------------------------------------------------- Export / Import
+
+function exportieren() {
+  const blob = new Blob([JSON.stringify(daten, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "vorratsdaten.json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function importieren(datei) {
+  if (!datei) return;
+  datei.text().then(text => {
+    const neu = JSON.parse(text);
+    if (!Array.isArray(neu.produkte)) throw new Error();
+    if (!confirm(`${neu.produkte.length} Produkte gefunden. Aktuelle Daten ersetzen?`)) return;
+    daten = neu;
+    gewaehlt = null;
+    speichern();
+    aktualisieren();
+  }).catch(() => alert("Die Datei konnte nicht gelesen werden – ist es eine vorratsdaten.json?"));
+  document.getElementById("importdatei").value = "";
+}
+
+// ---------------------------------------------------------------- Anzeige
+
+function zahl(n) {
+  return n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
+}
+
+function zeigeTab(name) {
+  for (const t of ["vorrat", "liste"]) {
+    document.getElementById("tab-" + t).classList.toggle("aktiv", t === name);
+    document.getElementById("tabknopf-" + t).classList.toggle("aktiv", t === name);
+  }
+}
+
+function aktualisieren() {
+  // Tab Vorrat
+  const zeilen = document.getElementById("vorrat-zeilen");
+  zeilen.innerHTML = "";
+  for (const p of daten.produkte) {
+    const tage = reichtNochTage(p);
+    const tr = document.createElement("tr");
+    tr.classList.toggle("gewaehlt", p.name === gewaehlt);
+    tr.onclick = () => { gewaehlt = p.name; aktualisieren(); };
+    tr.innerHTML =
+      `<td></td><td></td><td class="zahl"></td><td class="zahl"></td><td class="zahl"></td>`;
+    const z = tr.children;
+    z[0].textContent = p.name;
+    z[1].textContent = p.einheit;
+    z[2].textContent = zahl(bestand(p));
+    z[3].textContent = zahl(p.soll);
+    z[4].textContent = tage !== null ? `${Math.round(tage)} Tage` : "– (zu wenig Daten)";
+    zeilen.append(tr);
+  }
+  document.getElementById("vorrat-leer").hidden = daten.produkte.length > 0;
+
+  // Tab Einkaufsliste
+  const liste = document.getElementById("liste-zeilen");
+  liste.innerHTML = "";
+  const eintraege = einkaufsliste();
+  for (const [p, fehlt] of eintraege) {
+    const tage = reichtNochTage(p);
+    let hinweis, klasse = "";
+    if (bestand(p) === 0) { hinweis = "Vorrat ist leer!"; klasse = "hinweis-leer"; }
+    else if (tage !== null) hinweis = `Vorrat reicht noch ca. ${Math.round(tage)} Tage`;
+    else hinweis = "Unter Soll-Vorrat";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td></td><td class="zahl"></td><td></td><td class="${klasse}"></td>`;
+    const z = tr.children;
+    z[0].textContent = p.name;
+    z[1].textContent = zahl(fehlt);
+    z[2].textContent = p.einheit;
+    z[3].textContent = hinweis;
+    liste.append(tr);
+  }
+  document.getElementById("liste-leer").hidden = eintraege.length > 0;
+}
+
+aktualisieren();
+</script>
+</body>
+</html>
