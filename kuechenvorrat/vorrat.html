@@ -232,6 +232,7 @@
     schnelleren Weg: Ein lokaler Mini-Server macht den Import vollautomatisch — ein Klick auf das
     Lesezeichen, und der Einkauf ist bereits verbucht, ohne dass du etwas kopieren musst.
     Das können wir jederzeit nachrüsten.</p>
+
   </section>
 </main>
 
@@ -582,23 +583,31 @@ let reweArtikel = []; // [{name, menge}]
 function reweParsen(text) {
   const artikel = [];
   for (let zeile of text.split("\n")) {
-    zeile = zeile.trim();
+    // Tabs (Spaltentrenner beim Kopieren aus Tabellen) zu Leerzeichen
+    zeile = zeile.replace(/\t/g, " ").trim();
     if (!zeile) continue;
-    // Preise und reine Zahlen-/Statuszeilen überspringen
-    if (/^\d+[.,]\d{2}\s*€?$/.test(zeile) || /^€/.test(zeile)) continue;
-    if (/^(gesamt|summe|zwischensumme|liefer|servicegeb|rabatt|mwst|pfand|bestell|artikel\b)/i.test(zeile)) continue;
+    // Preise überall in der Zeile entfernen (z. B. "5,94 €", "2,19€")
+    zeile = zeile.replace(/\d+[.,]\d{2}\s*€/g, " ").replace(/\s+/g, " ").trim();
+    if (!zeile) continue;
+    // Reine Zahlen-/Statuszeilen überspringen
+    if (/^[\d.,\s€%]+$/.test(zeile)) continue;
+    if (/^(gesamt|summe|zwischensumme|liefer|servicegeb|rabatt|mwst|pfand|bestell|artikel\b|warenkorb|menge|preis)/i.test(zeile)) continue;
 
     let menge = 1, name = zeile;
-    let m = zeile.match(/^(\d+(?:[.,]\d+)?)\s*[x×]\s+(.+)$/i)      // "2 x Vollmilch"
-         || zeile.match(/^(.+?)\s+[x×]?\s*(\d+(?:[.,]\d+)?)\s*(?:x|Stk\.?|Stück)$/i); // "Vollmilch 2 Stk"
+    // "2 x Vollmilch" / "2x Vollmilch" am Anfang
+    let m = zeile.match(/^(\d+(?:[.,]\d+)?)\s*[x×]\s+(.+)$/i);
     if (m) {
-      const a = parseFloat(m[1].replace(",", "."));
-      if (!isNaN(a) && /^\d/.test(m[1])) { menge = a; name = m[2]; }
-      else { name = m[1]; menge = parseFloat(m[2].replace(",", ".")); }
+      menge = parseFloat(m[1].replace(",", "."));
+      name = m[2];
+    } else {
+      // "Vollmilch ... 2 x" / "Vollmilch 2 Stk" / "Vollmilch 2 Stück" am Ende
+      m = zeile.match(/^(.+?)\s+(\d+(?:[.,]\d+)?)\s*(?:[x×]|stk\.?|stück)$/i);
+      if (m) { name = m[1]; menge = parseFloat(m[2].replace(",", ".")); }
     }
-    name = name.replace(/\s*\d+[.,]\d{2}\s*€.*$/, "").trim(); // Preis am Zeilenende abschneiden
+    if (isNaN(menge) || menge <= 0) menge = 1;
+    name = name.replace(/\s+/g, " ").trim();
     if (name.length < 2) continue;
-    const vorhanden = artikel.find(a => a.name === name);
+    const vorhanden = artikel.find(a => a.name.toLowerCase() === name.toLowerCase());
     if (vorhanden) vorhanden.menge += menge; else artikel.push({ name, menge });
   }
   return artikel;
