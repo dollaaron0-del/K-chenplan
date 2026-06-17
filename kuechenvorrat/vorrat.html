@@ -113,6 +113,7 @@
           <th>Produkt</th><th>Einheit</th>
           <th class="zahl">Bestand (geschätzt)</th><th class="zahl">Soll-Vorrat</th>
           <th class="zahl">Reicht noch ca.</th>
+          <th class="zahl">Nächste Bestellung</th>
         </tr>
       </thead>
       <tbody id="vorrat-zeilen"></tbody>
@@ -314,11 +315,14 @@ function heute() {
 function verbrauchProTag(p) {
   const eink = [...(p.einkaeufe || [])].sort((a, b) => a.datum.localeCompare(b.datum));
   if (eink.length < 2) return null;
-  const tage = (new Date(eink[eink.length - 1].datum) - new Date(eink[0].datum)) / 86400000;
-  if (tage <= 0) return null;
-  // Menge ohne den letzten Einkauf – die gilt als im Zeitraum verbraucht
-  const menge = eink.slice(0, -1).reduce((s, e) => s + e.menge, 0);
-  return menge / tage;
+  // Rate aus allen Lücken zwischen aufeinanderfolgenden Bestellungen:
+  // Wie viel wurde jeweils in der Zeit bis zur nächsten Bestellung verbraucht?
+  let gesamtMenge = 0, gesamtTage = 0;
+  for (let i = 0; i < eink.length - 1; i++) {
+    const tage = (new Date(eink[i+1].datum) - new Date(eink[i].datum)) / 86400000;
+    if (tage > 0) { gesamtMenge += eink[i].menge; gesamtTage += tage; }
+  }
+  return gesamtTage > 0 ? gesamtMenge / gesamtTage : null;
 }
 
 function bestand(p) {
@@ -346,6 +350,20 @@ function bestand(p) {
 function reichtNochTage(p) {
   const rate = verbrauchProTag(p);
   return rate ? bestand(p) / rate : null;
+}
+
+function naechsteBestellungInTagen(p) {
+  // Wann fällt der Bestand unter den Soll-Vorrat? Dann sollte nachbestellt werden.
+  const rate = verbrauchProTag(p);
+  if (!rate) return null;
+  const ueberSoll = bestand(p) - p.soll;
+  return ueberSoll / rate; // kann negativ sein -> schon jetzt fällig
+}
+
+function datumInTagen(tage) {
+  const d = new Date();
+  d.setDate(d.getDate() + Math.round(tage));
+  return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
 function einkaufsliste() {
@@ -624,13 +642,22 @@ function aktualisieren() {
     tr.classList.toggle("gewaehlt", p.name === gewaehlt);
     tr.onclick = () => { gewaehlt = p.name; aktualisieren(); };
     tr.innerHTML =
-      `<td></td><td></td><td class="zahl"></td><td class="zahl"></td><td class="zahl"></td>`;
+      `<td></td><td></td><td class="zahl"></td><td class="zahl"></td><td class="zahl"></td><td class="zahl"></td>`;
     const z = tr.children;
     z[0].textContent = p.name;
     z[1].textContent = p.einheit;
     z[2].textContent = zahl(bestand(p));
     z[3].textContent = zahl(p.soll);
     z[4].textContent = tage !== null ? `${Math.round(tage)} Tage` : "– (zu wenig Daten)";
+    const bisBestellung = naechsteBestellungInTagen(p);
+    if (bisBestellung === null) {
+      z[5].textContent = "– (zu wenig Daten)";
+    } else if (bisBestellung <= 0) {
+      z[5].textContent = "jetzt";
+      z[5].classList.add("hinweis-leer");
+    } else {
+      z[5].textContent = `${datumInTagen(bisBestellung)} (in ${Math.round(bisBestellung)} T.)`;
+    }
     zeilen.append(tr);
   }
   document.getElementById("vorrat-leer").hidden = daten.produkte.length > 0;
