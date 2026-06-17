@@ -123,7 +123,8 @@
       <thead>
         <tr>
           <th>Produkt</th><th>Einheit</th>
-          <th class="zahl">Bestand (geschätzt)</th><th class="zahl">Soll-Vorrat</th>
+          <th class="zahl">Bestand (geschätzt)</th>
+          <th class="zahl">Minimum</th><th class="zahl">Maximum</th>
           <th class="zahl">Reicht noch ca.</th>
           <th class="zahl">Nächste Bestellung</th>
         </tr>
@@ -136,7 +137,7 @@
       <button class="knopf" onclick="produktAnlegen()">Produkt anlegen</button>
       <button class="knopf" onclick="einkauf()">Einkauf eintragen</button>
       <button class="knopf" onclick="verbrauchEintragen()">Verbrauch eintragen</button>
-      <button class="knopf sekundaer" onclick="sollAendern()">Soll-Vorrat ändern</button>
+      <button class="knopf sekundaer" onclick="minMaxAendern()">Min / Max ändern</button>
       <button class="knopf sekundaer" onclick="detailOeffnen()">Bestellhistorie</button>
       <button class="knopf gefahr rechts" onclick="loeschen()">Produkt löschen</button>
     </div>
@@ -151,13 +152,23 @@
   </section>
 
   <section id="tab-liste" class="tab">
-    <table>
-      <thead>
-        <tr><th>Produkt</th><th class="zahl">Kaufen</th><th>Einheit</th><th>Hinweis</th></tr>
-      </thead>
-      <tbody id="liste-zeilen"></tbody>
-    </table>
-    <div id="liste-leer" class="leer" hidden>Alles aufgefüllt – es muss nichts gekauft werden. 🎉</div>
+    <div id="liste-noetig-block">
+      <h3 style="margin:0 0 6px;color:#a33">Jetzt nötig <span style="font-weight:400;font-size:.85em;color:#777">— unter Minimum</span></h3>
+      <table>
+        <thead><tr><th>Produkt</th><th class="zahl">Kaufen</th><th>Einheit</th><th>Reicht dann ca.</th></tr></thead>
+        <tbody id="liste-noetig"></tbody>
+      </table>
+      <div id="liste-noetig-leer" class="leer" hidden>Nichts unter Minimum.</div>
+    </div>
+    <div id="liste-mitnehmen-block" style="margin-top:16px">
+      <h3 style="margin:0 0 6px;color:#b07000">Jetzt mitnehmen empfohlen <span style="font-weight:400;font-size:.85em;color:#777">— reicht nicht bis zum nächsten Einkauf</span></h3>
+      <table>
+        <thead><tr><th>Produkt</th><th class="zahl">Kaufen</th><th>Einheit</th><th>Reicht dann ca.</th></tr></thead>
+        <tbody id="liste-mitnehmen"></tbody>
+      </table>
+      <div id="liste-mitnehmen-leer" class="leer" hidden>Alles reicht bis zum nächsten voraussichtlichen Einkauf.</div>
+    </div>
+    <div id="liste-leer" class="leer" hidden style="margin-top:12px">Alles aufgefüllt – es muss nichts gekauft werden.</div>
   </section>
 
   <section id="tab-rewe" class="tab">
@@ -427,12 +438,14 @@ function reichtNochTage(p) {
   return rate ? bestand(p) / rate : null;
 }
 
+// Rückwärtskompatibilität: ältere Produkte haben nur 'soll', neue haben 'min'/'max'
+function pMin(p) { return p.min ?? p.soll ?? 0; }
+function pMax(p) { return p.max ?? p.soll ?? p.min ?? 0; }
+
 function naechsteBestellungInTagen(p) {
-  // Wann fällt der Bestand unter den Soll-Vorrat? Dann sollte nachbestellt werden.
   const rate = verbrauchProTag(p);
   if (!rate) return null;
-  const ueberSoll = bestand(p) - p.soll;
-  return ueberSoll / rate; // kann negativ sein -> schon jetzt fällig
+  return (bestand(p) - pMin(p)) / rate; // negativ = schon jetzt fällig
 }
 
 function datumInTagen(tage) {
@@ -441,10 +454,42 @@ function datumInTagen(tage) {
   return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+// Durchschnittlicher Einkaufsabstand in Tagen (über alle Produkte)
+function durchschnittlicherEinkaufsabstand() {
+  let summe = 0, anzahl = 0;
+  for (const p of daten.produkte) {
+    const eink = [...(p.einkaeufe || [])].sort((a, b) => a.datum.localeCompare(b.datum));
+    for (let i = 1; i < eink.length; i++) {
+      const t = (new Date(eink[i].datum) - new Date(eink[i-1].datum)) / 86400000;
+      if (t > 0) { summe += t; anzahl++; }
+    }
+  }
+  return anzahl > 0 ? summe / anzahl : 14; // Fallback: 14 Tage
+}
+
+function kaufmengeUndReichweite(p) {
+  const kaufen = Math.max(0, pMax(p) - bestand(p));
+  const rate = verbrauchProTag(p);
+  const reichtTage = rate ? (bestand(p) + kaufen) / rate : null;
+  return { kaufen, reichtTage };
+}
+
 function einkaufsliste() {
-  return daten.produkte
-    .map(p => [p, p.soll - bestand(p)])
-    .filter(([, fehlt]) => fehlt > 0);
+  const abstand = durchschnittlicherEinkaufsabstand();
+  const noetig = [], mitnehmen = [];
+  for (const p of daten.produkte) {
+    const b = bestand(p);
+    const rate = verbrauchProTag(p);
+    const { kaufen, reichtTage } = kaufmengeUndReichweite(p);
+    if (kaufen <= 0) continue; // bereits auf Maximum
+    if (b < pMin(p)) {
+      noetig.push({ p, kaufen, reichtTage });
+    } else if (rate && b / rate < abstand) {
+      // Bestand reicht weniger lang als der typische Einkaufsabstand → jetzt mitnehmen
+      mitnehmen.push({ p, kaufen, reichtTage });
+    }
+  }
+  return { noetig, mitnehmen };
 }
 
 // ---------------------------------------------------------------- Dialog
@@ -495,16 +540,19 @@ function produktAnlegen() {
   frage("Produkt anlegen", [
     { text: "Name des Produkts:" },
     { text: "Einheit (z. B. Stück, Liter, kg):", vorgabe: "Stück" },
-    { text: "Soll-Vorrat (wie viel soll immer da sein?):", zahl: true },
-  ], ([name, einheit, soll]) => {
+    { text: "Minimum (ab wann nachbestellen):", zahl: true },
+    { text: "Maximum (wie viel passt rein / max. Vorrat):", zahl: true },
+  ], ([name, einheit, minStr, maxStr]) => {
     if (!name) return;
     if (daten.produkte.some(p => p.name.toLowerCase() === name.toLowerCase())) {
-      alert("Dieses Produkt gibt es schon.");
-      return;
+      alert("Dieses Produkt gibt es schon."); return;
     }
-    const sollZahl = parseFloat(soll.replace(",", "."));
-    if (isNaN(sollZahl) || sollZahl < 0) { alert("Bitte einen gültigen Soll-Vorrat eingeben."); return; }
-    daten.produkte.push({ name, einheit: einheit || "Stück", soll: sollZahl, einkaeufe: [], verbrauch: [] });
+    const min = parseFloat(minStr.replace(",", "."));
+    const max = parseFloat(maxStr.replace(",", "."));
+    if (isNaN(min) || min < 0 || isNaN(max) || max < min) {
+      alert("Bitte gültige Werte eingeben. Maximum muss größer oder gleich Minimum sein."); return;
+    }
+    daten.produkte.push({ name, einheit: einheit || "Stück", min, max, einkaeufe: [], verbrauch: [] });
     speichern();
     aktualisieren();
   });
@@ -525,15 +573,19 @@ function mengeErfassen(titel, feldtext, liste) {
 function einkauf()            { mengeErfassen("Einkauf", "Gekaufte Menge", "einkaeufe"); }
 function verbrauchEintragen() { mengeErfassen("Verbrauch", "Verbrauchte Menge", "verbrauch"); }
 
-function sollAendern() {
+function minMaxAendern() {
   const p = gewaehltesProdukt();
   if (!p) return;
-  frage(`Soll-Vorrat: ${p.name}`, [
-    { text: `Wie viel soll immer da sein? (${p.einheit}):`, zahl: true, vorgabe: p.soll },
-  ], ([wert]) => {
-    const soll = parseFloat(String(wert).replace(",", "."));
-    if (isNaN(soll) || soll < 0) { alert("Bitte einen gültigen Soll-Vorrat eingeben."); return; }
-    p.soll = soll;
+  frage(`Min / Max: ${p.name}`, [
+    { text: `Minimum – ab wann nachbestellen (${p.einheit}):`, zahl: true, vorgabe: pMin(p) },
+    { text: `Maximum – wie viel passt rein (${p.einheit}):`, zahl: true, vorgabe: pMax(p) },
+  ], ([minStr, maxStr]) => {
+    const min = parseFloat(String(minStr).replace(",", "."));
+    const max = parseFloat(String(maxStr).replace(",", "."));
+    if (isNaN(min) || min < 0 || isNaN(max) || max < min) {
+      alert("Maximum muss größer oder gleich Minimum sein."); return;
+    }
+    p.min = min; p.max = max;
     speichern();
     aktualisieren();
   });
@@ -859,56 +911,73 @@ function zeigeTab(name) {
   document.getElementById("bookmarklet-link").href = "javascript:" + encodeURIComponent(code);
 })();
 
+function listeZeileErstellen(eintrag, klasse) {
+  const { p, kaufen, reichtTage } = eintrag;
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td></td><td class="zahl ${klasse}"></td><td></td><td></td>`;
+  const z = tr.children;
+  z[0].textContent = p.name;
+  z[1].textContent = zahl(kaufen);
+  z[2].textContent = p.einheit;
+  if (reichtTage !== null) {
+    const wochen = (reichtTage / 7).toFixed(1);
+    z[3].textContent = `nach dem Kauf ca. ${Math.round(reichtTage)} Tage (${wochen} Wo.) Vorrat`;
+  } else {
+    z[3].textContent = "nach dem Kauf: Dauer unbekannt (zu wenig Daten)";
+  }
+  return tr;
+}
+
 function aktualisieren() {
   // Tab Vorrat
   const zeilen = document.getElementById("vorrat-zeilen");
   zeilen.innerHTML = "";
   for (const p of daten.produkte) {
     const tage = reichtNochTage(p);
+    const b = bestand(p);
+    const unterMin = b < pMin(p);
     const tr = document.createElement("tr");
     tr.classList.toggle("gewaehlt", p.name === gewaehlt);
+    if (unterMin) tr.style.background = "#fff0f0";
     tr.onclick = () => { gewaehlt = p.name; aktualisieren(); };
     tr.innerHTML =
-      `<td></td><td></td><td class="zahl"></td><td class="zahl"></td><td class="zahl"></td><td class="zahl"></td>`;
+      `<td></td><td></td><td class="zahl"></td><td class="zahl"></td><td class="zahl"></td><td class="zahl"></td><td class="zahl"></td>`;
     const z = tr.children;
     z[0].textContent = p.name;
     z[1].textContent = p.einheit;
-    z[2].textContent = zahl(bestand(p));
-    z[3].textContent = zahl(p.soll);
-    z[4].textContent = tage !== null ? `${Math.round(tage)} Tage` : "– (zu wenig Daten)";
+    z[2].textContent = zahl(b);
+    z[3].textContent = zahl(pMin(p));
+    z[4].textContent = zahl(pMax(p));
+    z[5].textContent = tage !== null ? `${Math.round(tage)} Tage` : "– (zu wenig Daten)";
     const bisBestellung = naechsteBestellungInTagen(p);
     if (bisBestellung === null) {
-      z[5].textContent = "– (zu wenig Daten)";
+      z[6].textContent = "– (zu wenig Daten)";
     } else if (bisBestellung <= 0) {
-      z[5].textContent = "jetzt";
-      z[5].classList.add("hinweis-leer");
+      z[6].innerHTML = `<b style="color:#a33">jetzt bestellen</b>`;
     } else {
-      z[5].textContent = `${datumInTagen(bisBestellung)} (in ${Math.round(bisBestellung)} T.)`;
+      z[6].textContent = `${datumInTagen(bisBestellung)} (in ${Math.round(bisBestellung)} T.)`;
     }
     zeilen.append(tr);
   }
   document.getElementById("vorrat-leer").hidden = daten.produkte.length > 0;
 
   // Tab Einkaufsliste
-  const liste = document.getElementById("liste-zeilen");
-  liste.innerHTML = "";
-  const eintraege = einkaufsliste();
-  for (const [p, fehlt] of eintraege) {
-    const tage = reichtNochTage(p);
-    let hinweis, klasse = "";
-    if (bestand(p) === 0) { hinweis = "Vorrat ist leer!"; klasse = "hinweis-leer"; }
-    else if (tage !== null) hinweis = `Vorrat reicht noch ca. ${Math.round(tage)} Tage`;
-    else hinweis = "Unter Soll-Vorrat";
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td></td><td class="zahl"></td><td></td><td class="${klasse}"></td>`;
-    const z = tr.children;
-    z[0].textContent = p.name;
-    z[1].textContent = zahl(fehlt);
-    z[2].textContent = p.einheit;
-    z[3].textContent = hinweis;
-    liste.append(tr);
-  }
-  document.getElementById("liste-leer").hidden = eintraege.length > 0;
+  const { noetig, mitnehmen } = einkaufsliste();
+  const alleLeer = noetig.length === 0 && mitnehmen.length === 0;
+
+  const noeTbody = document.getElementById("liste-noetig");
+  noeTbody.innerHTML = "";
+  noetig.forEach(e => noeTbody.append(listeZeileErstellen(e, "hinweis-leer")));
+  document.getElementById("liste-noetig-leer").hidden = noetig.length > 0;
+  document.getElementById("liste-noetig-block").hidden = false;
+
+  const mitTbody = document.getElementById("liste-mitnehmen");
+  mitTbody.innerHTML = "";
+  mitnehmen.forEach(e => mitTbody.append(listeZeileErstellen(e, "")));
+  document.getElementById("liste-mitnehmen-leer").hidden = mitnehmen.length > 0;
+  document.getElementById("liste-mitnehmen-block").hidden = false;
+
+  document.getElementById("liste-leer").hidden = !alleLeer;
 }
 
 aktualisieren();
