@@ -90,6 +90,17 @@
 
   .hinweis-leer { color: #a33; font-weight: 600; }
   footer { max-width: 860px; margin: 8px auto 24px; padding: 0 16px; font-size: .8em; color: #777; }
+
+  /* Detail-Dialog */
+  dialog.detail { min-width: min(680px, 95vw); max-height: 85vh; display: flex; flex-direction: column; padding: 0; }
+  dialog.detail .detail-kopf { padding: 16px 18px 12px; border-bottom: 1px solid var(--rand); }
+  dialog.detail .detail-kopf h2 { margin: 0 0 4px; }
+  dialog.detail .detail-kopf p { margin: 0; font-size: .9em; color: #555; }
+  dialog.detail .detail-body { overflow-y: auto; padding: 0 18px 4px; flex: 1; }
+  dialog.detail .detail-fuss { padding: 12px 18px; border-top: 1px solid var(--rand); display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+  .detail-body table { font-size: .95em; }
+  .detail-body td button { padding: 3px 10px; font-size: .85em; }
+  .info-box { background: var(--akzent-hell); border-radius: 8px; padding: 10px 14px; margin: 10px 0; font-size: .92em; }
 </style>
 </head>
 <body>
@@ -126,6 +137,7 @@
       <button class="knopf" onclick="einkauf()">Einkauf eintragen</button>
       <button class="knopf" onclick="verbrauchEintragen()">Verbrauch eintragen</button>
       <button class="knopf sekundaer" onclick="sollAendern()">Soll-Vorrat ändern</button>
+      <button class="knopf sekundaer" onclick="detailOeffnen()">Bestellhistorie</button>
       <button class="knopf gefahr rechts" onclick="loeschen()">Produkt löschen</button>
     </div>
     <div class="leiste">
@@ -236,6 +248,26 @@
     <button class="knopf sekundaer" onclick="dialogAbbrechen()">Abbrechen</button>
     <button class="knopf" onclick="dialogOk()">OK</button>
   </menu>
+</dialog>
+
+<dialog id="detail-dialog" class="detail">
+  <div class="detail-kopf">
+    <h2 id="detail-titel"></h2>
+    <p id="detail-info"></p>
+  </div>
+  <div class="detail-body">
+    <div id="detail-vorhersage" class="info-box" hidden></div>
+    <h3 style="margin:12px 0 6px">Bestellhistorie</h3>
+    <table>
+      <thead><tr><th>Datum</th><th class="zahl">Menge</th><th>Einheit</th><th></th></tr></thead>
+      <tbody id="detail-zeilen"></tbody>
+    </table>
+    <div id="detail-leer" class="leer" hidden>Noch keine Einträge.</div>
+  </div>
+  <div class="detail-fuss">
+    <button class="knopf sekundaer" onclick="detailEintragHinzufuegen()">+ Eintrag hinzufügen</button>
+    <button class="knopf" onclick="document.getElementById('detail-dialog').close()">Schließen</button>
+  </div>
 </dialog>
 
 <script>
@@ -659,6 +691,95 @@ function reweVerbuchen() {
   alert(`${gebucht} Einkäufe verbucht` + (uebersprungen ? `, ${uebersprungen} übersprungen (keine Zuordnung)` : "") +
         `.\nNeu angelegte Produkte haben Soll-Vorrat 0 – den kannst du im Tab „Vorrat" noch setzen.\n` +
         `Du kannst jetzt die nächste Bestellung einfügen (Datum nicht vergessen).`);
+}
+
+// ---------------------------------------------------------------- Bestellhistorie / Detail
+
+let detailProdukt = null;
+
+function detailOeffnen() {
+  const p = gewaehltesProdukt();
+  if (!p) return;
+  detailProdukt = p;
+  detailAktualisieren();
+  document.getElementById("detail-dialog").showModal();
+}
+
+function detailAktualisieren() {
+  const p = detailProdukt;
+  document.getElementById("detail-titel").textContent = p.name;
+  document.getElementById("detail-info").textContent =
+    `Einheit: ${p.einheit} · Soll-Vorrat: ${zahl(p.soll)} ${p.einheit}`;
+
+  // Vorhersage-Box
+  const rate = verbrauchProTag(p);
+  const box = document.getElementById("detail-vorhersage");
+  if (rate) {
+    const eink = [...(p.einkaeufe || [])].sort((a,b) => a.datum.localeCompare(b.datum));
+    const letztes = eink[eink.length-1];
+    const intervallTage = eink.length >= 2
+      ? (new Date(eink[eink.length-1].datum) - new Date(eink[0].datum)) / 86400000 / (eink.length-1)
+      : null;
+    const naechsteInTagen = naechsteBestellungInTagen(p);
+    let text = `Verbrauch: ca. ${(rate * 7).toFixed(1)} ${p.einheit} pro Woche · `;
+    if (intervallTage) text += `Bestellabstand bisher: alle ca. ${Math.round(intervallTage)} Tage · `;
+    if (naechsteInTagen !== null) {
+      if (naechsteInTagen <= 0) text += `Nächste Bestellung: jetzt fällig`;
+      else text += `Nächste Bestellung: in ca. ${Math.round(naechsteInTagen)} Tagen (${datumInTagen(naechsteInTagen)})`;
+    }
+    box.textContent = text;
+    box.hidden = false;
+  } else {
+    box.hidden = true;
+  }
+
+  // Tabelle
+  const zeilen = document.getElementById("detail-zeilen");
+  zeilen.innerHTML = "";
+  const eintraege = [...(p.einkaeufe || [])].sort((a,b) => b.datum.localeCompare(a.datum)); // neueste zuerst
+  eintraege.forEach((e, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td></td><td class="zahl"></td><td></td><td></td>`;
+    const z = tr.children;
+    // Datum editierbar
+    const inp = document.createElement("input");
+    inp.type = "date"; inp.value = e.datum;
+    inp.style.cssText = "border:1px solid var(--rand);border-radius:4px;padding:3px 6px;font-size:.9em";
+    inp.onchange = () => { e.datum = inp.value; speichern(); detailAktualisieren(); };
+    z[0].appendChild(inp);
+    // Menge editierbar
+    const mengeInp = document.createElement("input");
+    mengeInp.type = "number"; mengeInp.value = e.menge; mengeInp.min = "0"; mengeInp.step = "any";
+    mengeInp.style.cssText = "width:70px;border:1px solid var(--rand);border-radius:4px;padding:3px 6px;font-size:.9em";
+    mengeInp.onchange = () => {
+      const m = parseFloat(mengeInp.value);
+      if (!isNaN(m) && m > 0) { e.menge = m; speichern(); detailAktualisieren(); }
+    };
+    z[1].appendChild(mengeInp);
+    z[2].textContent = p.einheit;
+    const del = document.createElement("button");
+    del.className = "knopf gefahr"; del.textContent = "Löschen";
+    del.onclick = () => {
+      if (!confirm(`Eintrag vom ${e.datum} (${e.menge} ${p.einheit}) löschen?`)) return;
+      p.einkaeufe.splice(p.einkaeufe.indexOf(e), 1);
+      speichern(); aktualisieren(); detailAktualisieren();
+    };
+    z[3].appendChild(del);
+    zeilen.appendChild(tr);
+  });
+  document.getElementById("detail-leer").hidden = eintraege.length > 0;
+}
+
+function detailEintragHinzufuegen() {
+  frage(`Eintrag hinzufügen: ${detailProdukt.name}`, [
+    { text: "Datum:", vorgabe: heute() },
+    { text: `Menge (${detailProdukt.einheit}):`, zahl: true },
+  ], ([datum, menge]) => {
+    const m = parseFloat(String(menge).replace(",", "."));
+    if (!datum || isNaN(m) || m <= 0) return;
+    detailProdukt.einkaeufe.push({ datum, menge: m });
+    speichern(); aktualisieren(); detailAktualisieren();
+  });
 }
 
 // ---------------------------------------------------------------- Anzeige
