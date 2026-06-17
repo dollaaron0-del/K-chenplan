@@ -104,6 +104,7 @@
     <button id="tabknopf-vorrat" class="aktiv" onclick="zeigeTab('vorrat')">Vorrat</button>
     <button id="tabknopf-liste" onclick="zeigeTab('liste')">Einkaufsliste</button>
     <button id="tabknopf-rewe" onclick="zeigeTab('rewe')">REWE-Import</button>
+    <button id="tabknopf-einrichten" onclick="zeigeTab('einrichten')">Einrichtung</button>
   </div>
 
   <section id="tab-vorrat" class="tab aktiv">
@@ -178,6 +179,47 @@
         <button class="knopf" onclick="reweVerbuchen()">Einkäufe verbuchen</button>
       </div>
     </div>
+  </section>
+
+  <section id="tab-einrichten" class="tab">
+    <h2 style="margin-top:0">REWE-Bookmarklet einrichten</h2>
+    <p>Das Bookmarklet ist ein Lesezeichen in deinem Browser. Wenn du es auf einer REWE-Bestellseite
+    anklickst, liest es automatisch alle Artikel und Mengen aus und kopiert sie in die Zwischenablage —
+    du musst nur noch in den Tab „REWE-Import" wechseln und Strg+V drücken.</p>
+
+    <h3>Schritt 1: Lesezeichen-Leiste einblenden</h3>
+    <p>Falls die Leiste oben im Browser nicht sichtbar ist:<br>
+    <b>Edge/Chrome:</b> Strg+Shift+B drücken</p>
+
+    <h3>Schritt 2: Bookmarklet hinzufügen</h3>
+    <p>Den folgenden Link auf die Lesezeichen-Leiste ziehen (Maustaste gedrückt halten und raufziehen):</p>
+    <div style="background:#f0f0f0;border:2px dashed var(--rand);border-radius:8px;padding:16px;text-align:center;margin:8px 0">
+      <a id="bookmarklet-link" href="" style="font-size:1.1em;font-weight:600;color:var(--akzent);padding:10px 20px;border:2px solid var(--akzent);border-radius:8px;text-decoration:none">
+        📋 REWE → Vorrat
+      </a>
+      <p style="margin:10px 0 0;font-size:.85em;color:#666">← diesen Link auf die Lesezeichen-Leiste ziehen</p>
+    </div>
+    <p style="font-size:.9em">Klappt das Ziehen nicht? Rechtsklick auf den Link → „Als Lesezeichen speichern" → in die Lesezeichen-Leiste speichern.</p>
+
+    <h3>Schritt 3: Benutzen</h3>
+    <ol>
+      <li>Auf <b>rewe.de</b> einloggen → <b>Mein Konto → Meine Bestellungen</b> → eine Bestellung öffnen</li>
+      <li>Auf <b>📋 REWE → Vorrat</b> in der Lesezeichen-Leiste klicken</li>
+      <li>Es erscheint kurz eine Meldung „X Artikel kopiert" — dann zu dieser Datei wechseln</li>
+      <li>Tab <b>REWE-Import</b> öffnen → <b>Strg+V</b> → <b>Analysieren</b></li>
+    </ol>
+
+    <div id="einrichten-hinweis" style="background:#fff8e1;border:1px solid #f0c040;border-radius:8px;padding:12px;margin-top:8px">
+      <b>⚠ Bookmarklet noch nicht getestet?</b> Das Bookmarklet kennt die genaue REWE-Seitenstruktur noch nicht.
+      Wenn nach dem Klicken die Meldung „Keine Artikel gefunden" erscheint, drücke F12 auf der REWE-Seite,
+      klicke auf einen Artikel in der Liste und schick einen Screenshot davon — dann passe ich es exakt an.
+    </div>
+
+    <h3 style="margin-top:16px">Was passiert, wenn Python installiert ist?</h3>
+    <p>Sobald Python auf dem PC verfügbar ist (z. B. aus dem Microsoft Store), gibt es einen noch
+    schnelleren Weg: Ein lokaler Mini-Server macht den Import vollautomatisch — ein Klick auf das
+    Lesezeichen, und der Einkauf ist bereits verbucht, ohne dass du etwas kopieren musst.
+    Das können wir jederzeit nachrüsten.</p>
   </section>
 </main>
 
@@ -626,11 +668,66 @@ function zahl(n) {
 }
 
 function zeigeTab(name) {
-  for (const t of ["vorrat", "liste", "rewe"]) {
+  for (const t of ["vorrat", "liste", "rewe", "einrichten"]) {
     document.getElementById("tab-" + t).classList.toggle("aktiv", t === name);
     document.getElementById("tabknopf-" + t).classList.toggle("aktiv", t === name);
   }
 }
+
+// Bookmarklet dynamisch generieren (href kann nicht inline stehen, daher per JS setzen)
+(function() {
+  // Dieses Skript läuft auf der REWE-Seite wenn der Nutzer das Lesezeichen anklickt.
+  // Es versucht mehrere bekannte Selektoren für REWE-Bestellartikel.
+  const code = `(function(){
+    var artikel=[];
+    var selektoren=[
+      // Bekannte REWE-Strukturen (wird ggf. angepasst):
+      {zeile:'.pdl-order-item,.order-item,[class*="OrderItem"],[class*="order-item"]',
+       name:'[class*="name" i],[class*="title" i],[class*="description" i],h3,h4,strong',
+       menge:'[class*="quantity" i],[class*="amount" i],[class*="count" i],[class*="anzahl" i]'},
+      {zeile:'[data-testid*="product"],[data-testid*="item"],[data-testid*="artikel"]',
+       name:'[data-testid*="name"],[data-testid*="title"],h3,h4,strong',
+       menge:'[data-testid*="quantity"],[data-testid*="amount"],[data-testid*="menge"]'},
+      {zeile:'li.product,li.item,tr.item',
+       name:'.name,.title,.product-name',
+       menge:'.quantity,.amount,.qty'}
+    ];
+    for(var s=0;s<selektoren.length;s++){
+      var zeilen=document.querySelectorAll(selektoren[s].zeile);
+      if(!zeilen.length) continue;
+      zeilen.forEach(function(z){
+        var nameEl=z.querySelector(selektoren[s].name);
+        var mengeEl=z.querySelector(selektoren[s].menge);
+        if(!nameEl) return;
+        var name=(nameEl.textContent||'').trim().replace(/\\s+/g,' ');
+        var mengeText=(mengeEl?mengeEl.textContent:'1').trim();
+        var menge=parseFloat(mengeText.replace(',','.').replace(/[^0-9.]/g,''))||1;
+        if(name.length>2) artikel.push(menge>1?menge+' x '+name:name);
+      });
+      if(artikel.length) break;
+    }
+    if(!artikel.length){
+      // Fallback: alle sichtbaren Listenelemente die nach Produkten aussehen
+      document.querySelectorAll('li,tr').forEach(function(el){
+        var t=(el.textContent||'').trim().replace(/\\s+/g,' ');
+        if(t.length>5&&t.length<120&&!el.querySelector('li,tr')&&
+           !/^(gesamt|summe|liefer|datum|bestell|mwst|pfand)/i.test(t))
+          artikel.push(t);
+      });
+    }
+    if(!artikel.length){alert('Keine Artikel gefunden.\\nBitte F12 druecken, auf einen Artikel klicken und einen Screenshot schicken.');return;}
+    var datumM=document.body.innerText.match(/(\\d{1,2})\\.(\\d{1,2})\\.(\\d{4})/);
+    var datum=datumM?datumM[0]:'';
+    var text=(datum?'Datum: '+datum+'\\n':'')+artikel.join('\\n');
+    navigator.clipboard.writeText(text).then(function(){
+      alert(artikel.length+' Artikel kopiert!\\nJetzt zur Kuechen-Vorrat-Datei wechseln, Tab REWE-Import, Strg+V, Analysieren.');
+    },function(){
+      var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();
+      alert(artikel.length+' Artikel kopiert!\\nJetzt zur Kuechen-Vorrat-Datei wechseln, Tab REWE-Import, Strg+V, Analysieren.');
+    });
+  })();`;
+  document.getElementById("bookmarklet-link").href = "javascript:" + encodeURIComponent(code);
+})();
 
 function aktualisieren() {
   // Tab Vorrat
