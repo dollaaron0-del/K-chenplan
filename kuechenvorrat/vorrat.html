@@ -676,7 +676,7 @@ function reweParsenZeilen(text) {
     if (!zeile) continue;
     // Reine Zahlen-/Statuszeilen überspringen
     if (/^[\d.,\s€%]+$/.test(zeile)) continue;
-    if (/^(gesamt|summe|zwischensumme|liefer|servicegeb|rabatt|mwst|pfand|bestell|artikel\b|warenkorb|menge|preis)/i.test(zeile)) continue;
+    if (/^(gesamt|summe|zwischensumme|liefer|servicegeb|rabatt|mwst|pfand|bestell|artikel\b|warenkorb|menge|preis|datum)/i.test(zeile)) continue;
 
     let menge = 1, name = zeile;
     // "2 x Vollmilch" / "2x Vollmilch" am Anfang
