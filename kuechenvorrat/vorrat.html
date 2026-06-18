@@ -632,7 +632,40 @@ function importieren(datei) {
 const NEU = "__neu__";
 let reweArtikel = []; // [{name, menge}]
 
+// Haupt-Parser: zuerst das strukturierte REWE-Format versuchen,
+// sonst auf die zeilenweise Erkennung zurückfallen.
 function reweParsen(text) {
+  const strukturiert = reweParsenStrukturiert(text);
+  if (strukturiert.length) return strukturiert;
+  return reweParsenZeilen(text);
+}
+
+// REWE-Bestelldetailseite ("Meine Bestellungen" -> Bestellung öffnen):
+// Jeder Artikel ist ein Block aus  [Kategorie] [Name] [Menge] [Einzelpreis €] [Gesamtpreis €].
+// Wir erkennen die zwei aufeinanderfolgenden Preiszeilen und lesen Name+Menge davor.
+function reweParsenStrukturiert(text) {
+  const lines = text.split("\n").map(z => z.replace(/\t/g, " ").trim()).filter(z => z);
+  const istPreis = z => /\d+[.,]\d{2}\s*€/.test(z);
+  const artikel = [];
+  for (let i = 2; i + 1 < lines.length; i++) {
+    if (istPreis(lines[i]) && istPreis(lines[i + 1])) {
+      const name = lines[i - 2], mengeZeile = lines[i - 1];
+      // Name darf keine Preis-/Spaltenüberschrift sein
+      if (istPreis(name) || /^(menge|einzelpreis|gesamtpreis)$/i.test(name) || name.length < 2) continue;
+      // Menge nur übernehmen, wenn es eine reine Zahl ist; "890g" (Gewichtsware) -> 1
+      let menge = /^\d+([.,]\d+)?$/.test(mengeZeile) ? parseFloat(mengeZeile.replace(",", ".")) : 1;
+      if (isNaN(menge) || menge <= 0) menge = 1;
+      const vorhanden = artikel.find(a => a.name.toLowerCase() === name.toLowerCase());
+      if (vorhanden) vorhanden.menge += menge; else artikel.push({ name, menge });
+      i++; // beide Preiszeilen überspringen
+    }
+  }
+  return artikel;
+}
+
+// Zeilenweise Erkennung (Reserve für anderes/manuelles Format):
+// "2 x Vollmilch", "Vollmilch 2 Stk", Preise am Zeilenende werden entfernt.
+function reweParsenZeilen(text) {
   const artikel = [];
   for (let zeile of text.split("\n")) {
     // Tabs (Spaltentrenner beim Kopieren aus Tabellen) zu Leerzeichen
