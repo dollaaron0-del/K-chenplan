@@ -669,11 +669,14 @@ function reweAnalysieren() {
   const text = document.getElementById("rewe-text").value;
   reweArtikel = reweParsen(text);
 
-  // Bestelldatum automatisch aus dem Text übernehmen (z. B. "12.06.2026")
-  const d = text.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  // Bestelldatum automatisch aus dem Text übernehmen
+  // (akzeptiert "12.06.2026" und "11.06.26")
+  const d = text.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
   if (d) {
+    let jahr = d[3];
+    if (jahr.length === 2) jahr = "20" + jahr; // "26" -> "2026"
     document.getElementById("rewe-datum").value =
-      `${d[3]}-${d[2].padStart(2, "0")}-${d[1].padStart(2, "0")}`;
+      `${jahr}-${d[2].padStart(2, "0")}-${d[1].padStart(2, "0")}`;
   }
 
   const box = document.getElementById("rewe-ergebnis");
